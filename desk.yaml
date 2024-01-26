@@ -1,0 +1,207 @@
+esphome:
+  name: desk
+  friendly_name: Desk
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+substitutions:
+  mac: !secret desk_mac
+  min_height: 61.0
+  max_height: 125.3
+  PIN_UUID_S: 0000fee0-0000-1000-8000-00805f9b34fb
+  PIN_UUID_C1: 0000fee1-0000-1000-8000-00805f9b34fb
+  PIN_UUID_C2: 0000fee2-0000-1000-8000-00805f9b34fb
+
+esp32_ble_tracker:
+globals:
+  - id: ble_client_connected
+    type: bool
+    initial_value: 'false'
+captive_portal:
+ble_client:
+  - mac_address: ${mac}
+    id: my_ble_client
+    on_connect:
+      then:
+        - lambda: |-
+            id(ble_client_connected) = true;
+        - delay: 5s
+        - lambda: |-
+            id(getDeviceInfo).press();
+    on_disconnect:
+      then:
+        - lambda: |-
+            id(ble_client_connected) = false;
+
+binary_sensor:
+  - platform: template
+    name: 'Desk Connection'
+    id: desk_connection
+    lambda: 'return id(ble_client_connected);'
+
+sensor:
+  - platform: ble_client
+    type: rssi
+    ble_client_id: my_ble_client
+    name: "RSSI"
+
+  - platform: template
+    id: position
+    name: 'Position'
+    icon: 'mdi:label-percent'
+    unit_of_measurement: '%'
+    disabled_by_default: true
+
+  - platform: template
+    id: min_desk_height
+    name: 'Min Height'
+    icon: 'mdi:ruler'
+    unit_of_measurement: 'cm'
+
+  - platform: template
+    id: max_desk_height
+    name: 'Max Height'
+    icon: 'mdi:ruler'
+    unit_of_measurement: 'cm'
+    
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: my_ble_client
+    id: current_desk_height
+    name: 'Current Height'
+    service_uuid: ${PIN_UUID_S}
+    characteristic_uuid: ${PIN_UUID_C1}
+    icon: 'mdi:ruler'
+    unit_of_measurement: 'cm'
+    accuracy_decimals: 1
+    update_interval: never
+    notify: true
+    lambda: |-
+      if((x[1] == 0x06) || ((x[1] == 0x09) && (x[2] == 0x21))) {
+
+        uint16_t raw_height = ((uint16_t)x[3] << 8) | x[4];
+        unsigned short height_mm = raw_height;
+
+        if((x[1] == 0x09) && (x[2] == 0x21)){
+          uint16_t raw_min_height = ((uint16_t)x[5] << 8) | x[6];
+          unsigned short min_height_mm = raw_min_height;
+          id(min_desk_height).publish_state((float) min_height_mm / 10);
+          
+          uint16_t raw_max_height = ((uint16_t)x[7] << 8) | x[8];
+          unsigned short max_height_mm = raw_max_height;
+          id(max_desk_height).publish_state((float) max_height_mm / 10);
+        }
+
+        id(desk_height).publish_state((float) height_mm / 10);
+        id(position).publish_state((id(desk_height).state - id(min_desk_height).state) / (id(max_desk_height).state - id(min_desk_height).state)*100);
+
+        return (float) height_mm / 10;
+      }
+      else {
+        return {};
+      }
+
+button:
+  - platform: template
+    name: "Get Device Info"
+    id: "getDeviceInfo"
+    disabled_by_default: true
+    on_press:
+      - ble_client.ble_write:
+          id: my_ble_client
+          service_uuid: ${PIN_UUID_S}
+          characteristic_uuid: ${PIN_UUID_C2}
+          value: [0xa5, 0x03, 0x21, 0x24]
+
+  - platform: template
+    name: "Up"
+    id: "up"
+    icon: 'mdi:arrow-up'
+    on_press:
+      - ble_client.ble_write:
+          id: my_ble_client
+          service_uuid: ${PIN_UUID_S}
+          characteristic_uuid: ${PIN_UUID_C2}
+          value: [0xa5, 0x03, 0x12, 0x15]
+
+  - platform: template
+    name: "Stop"
+    id: "stop"
+    icon: 'mdi:stop'
+    on_press:
+      - ble_client.ble_write:
+          id: my_ble_client
+          service_uuid: ${PIN_UUID_S}
+          characteristic_uuid: ${PIN_UUID_C2}
+          value: [0xa5, 0x03, 0x10, 0x13]
+      - delay: 2s
+      - lambda: |-
+          id(getDeviceInfo).press();  
+
+  - platform: template
+    name: "Down"
+    id: "down"
+    icon: 'mdi:arrow-down'
+    on_press:
+      - ble_client.ble_write:
+          id: my_ble_client
+          service_uuid: ${PIN_UUID_S}
+          characteristic_uuid: ${PIN_UUID_C2}
+          value: [0xa5, 0x03, 0x14, 0x17]
+
+number:
+  - platform: template
+    name: "Desk Height"
+    id: desk_height
+    icon: 'mdi:arrow-up-down'
+    min_value: ${min_height}
+    max_value: ${max_height}
+    step: 0.1
+    set_action:
+      then:
+        - ble_client.ble_write:
+            id: my_ble_client
+            service_uuid: ${PIN_UUID_S}
+            characteristic_uuid: ${PIN_UUID_C2}
+            value: !lambda |-
+                uint16_t i2 = x * 10;
+                std::vector<unsigned char> input = {0xa5, 0x05, 0x31, 0x00, 0x00, 0x00};
+                input[3] = (i2 >> 8) & 255;
+                input[4] = i2 & 255;
+                input[5] = (input[1] + input[2] + input[3] + input[4]) & 255;
+                return input;     
+        - delay: 5s
+        - lambda: |-
+            id(getDeviceInfo).press();  
+
+cover:
+  - platform: template
+    name: "Desk"
+    id: desk_cover
+    has_position: true
+    assumed_state: true
+    lambda: !lambda |-
+        return (id(current_desk_height).state - id(min_desk_height).state) / (id(max_desk_height).state - id(min_desk_height).state);
+    open_action:
+      - lambda: |-
+          id(up).press();  
+    close_action:
+      - lambda: |-
+          id(down).press(); 
+    stop_action:
+      - lambda: |-
+          id(stop).press(); 
+    position_action:
+      - lambda:  !lambda |-
+          auto call = id(desk_height).make_call();
+          call.set_value(round((id(min_desk_height).state + (id(max_desk_height).state - id(min_desk_height).state) * pos) * 10) / 10);
+          call.perform();
