@@ -15,8 +15,6 @@ wifi:
 
 substitutions:
   mac: !secret desk_mac
-  min_height: 61.0
-  max_height: 125.3
   PIN_UUID_S: 0000fee0-0000-1000-8000-00805f9b34fb
   PIN_UUID_C1: 0000fee1-0000-1000-8000-00805f9b34fb
   PIN_UUID_C2: 0000fee2-0000-1000-8000-00805f9b34fb
@@ -163,8 +161,8 @@ number:
     name: "Desk Height"
     id: desk_height
     icon: 'mdi:arrow-up-down'
-    min_value: ${min_height}
-    max_value: ${max_height}
+    min_value: 61.0
+    max_value: 125.3
     step: 0.1
     set_action:
       then:
